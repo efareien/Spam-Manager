@@ -243,3 +243,6 @@ El programa cuenta con un moderado listado de errores frecuentes, entre ellos en
 ### Recomendaciones
 
 Sólo si es necesario configure el archivo `parameters.config`. También le recomendamos mantener ordenadas sus listas en alguna carpeta. Puede seguir la estructura que nosotros le proponemos, incluyendo sus listas en el directorio `lists` y creando para cada modificación una carpeta que siga el formato `mm/dd/aaaa hh:mm:ss`, en la que incluya todos los archivos que usted necesita: listas blancas, negras, usuarios permitidos y/o denegados. De esta forma usted puede usar el comando `--add` o `--remove` seguido de `--auto`, que automáticamente extraerá todos los archivos indicados en esta carpeta para agregar o remover directorios.
+
+### Para python3 y posteriores
+El proyecto originalmente fue desarrollado para python3 y se llama `spager3.py`. Prácticamente `spager.py` y `spager3.py` son lo mismo para los ojos del usuario, aunque internamente varía su sintáxis y hasta optimalidad, por lo tanto, todo el documento es perfectamente adaptable para este último script.
