@@ -1,26 +1,78 @@
 import logging
 import argparse
-import datetime
+import re
 from copy import deepcopy
 from tempfile import mkstemp
-from os import fdopen, remove, walk
+from os import fdopen, remove, walk, listdir
 from shutil import move, copymode
 
-"""
-Configuraciones basicas para el archivo log
-"""
-logging.basicConfig(filename="history.log", level=logging.DEBUG, format='[%(levelname)s:%(name)s:%(asctime)s]: %(message)s')
+class ParameterManager:
+    format = r'^([a-zA-Z_]+)\s*\=\s*([^\s]+)$'
+    valid_parameters = ["source_path", "whitelist_relative_path", "blacklist_relative_path", "log_path", "log_format"]
+    splitted_parameters = {
+        "whitelist_relative_path": {"key": "relative_paths", "subkey": "whitelist"},
+        "blacklist_relative_path": {"key": "relative_paths", "subkey": "blacklist"}
+        }
+
+    """
+    Permite obtener todos los parametros del archivo de configuracion presentes en la ruta
+    `config/parameters.config` que seran usados como referencia para agregar o eliminar dominios.
+    """
+    def get_parameters(source):
+        parameters = {
+            "source_path": '/home/re000444/mail/imaco.cl/',
+            "relative_paths": {
+                "whitelist": '/.spamassassin/whitelist',
+                "blacklist": '/.spamassassin/blacklist'
+            },
+            "log_path": "log/history.log",
+            "log_format": "[%(levelname)s:%(name)s:%(asctime)s]: %(message)s"
+        }
+        
+        with open(source) as file:
+            for parameter in file:
+                parameter = parameter.strip()
+
+                if parameter == '':
+                    continue
+
+                tokenized_parameter = re.match(ParameterManager.format, parameter)
+
+                if not tokenized_parameter:
+                    raise Exception("La configuracion presenta problemas en la sintaxis. Asegurese de escribir en cada linea el formato PARAMETRO=VALOR.")
+
+                tokenized_parameter = {"name": tokenized_parameter.groups()[0], "value": tokenized_parameter.groups()[1]}
+
+                if tokenized_parameter["name"] not in ParameterManager.valid_parameters:
+                    raise Exception(f"El parametro {tokenized_parameter['name']} no existe, solo son validos los siguientes: {ParameterManager.valid_parameters}")
+                
+                if tokenized_parameter["name"] in ParameterManager.splitted_parameters.keys():
+                    key = ParameterManager.splitted_parameters[tokenized_parameter["name"]]["key"]
+                    subkey = ParameterManager.splitted_parameters[tokenized_parameter["name"]]["subkey"]
+                    parameters[key][subkey] = tokenized_parameter["value"]
+                else:
+                    parameters[tokenized_parameter["name"]] = tokenized_parameter["value"]
+                
+        return parameters
 
 class SpamManager:
-    relative_paths = {
-            "whitelist": '/.spamassassin/whitelist',
-            "blacklist": '/.spamassassin/blacklist'
-        }
+    parameters = ParameterManager.get_parameters("config/parameters.config")
+    logging_functions = {"info": logging.info, "warning": logging.warning, "error": logging.error}
+
+    def __init__(self):
+        logging.basicConfig(
+            filename = SpamManager.parameters["log_path"],
+            format = SpamManager.parameters["log_format"],
+            level = logging.DEBUG)
+        self.users = next(walk(SpamManager.parameters["source_path"]))[1]
+
+    """
+    Permite registrar en el archivo log un mensaje de cierto tipo, ya sea warning, error o info.
+    """
+    def log_and_print(message, kind):
+        SpamManager.logging_functions[kind](message)
+        print(message)
     
-    def __init__(self, source_path):
-        self.source_path = source_path
-        self.users = folders = next(walk(source_path))[1]
-        
     """
     Permite almacenar todas las lineas de un archivo como elementos de una lista,
     saltandose todas aquellas que estan vacias.
@@ -39,6 +91,7 @@ class SpamManager:
                 result.append(line)
                 
         return result
+    
     """
     Permite filtrar que usuarios seran afectados por los cambios hechos en la lista blanca y/o negra.
     Parametros:
@@ -55,10 +108,19 @@ class SpamManager:
             if key not in ["allow", "deny"]:
                 raise Exception("Llaves mal provistas en la funcion filter_as; Solo se permiten las siguientes: allow o deny.")
 
+            users, domains = set(users), set(domains)
+
+            """
+            Simula un left join que excluye cualquier elemento del lado derecho, es decir, obtenemos los elementos que no están
+            presentes en el lado derecho para asi ver si estamos tratando con un usuario que no existe.
+            """
+            if len(domains) != len(users.intersection(domains)):
+                raise Exception("Uno o más usuarios que trata de filtrar no existen dentro del dominio.")
+            
             if key == "allow":
-                users = domains
+                users = list(domains)
             else:
-                users = list( set(users).difference( set(domains) ))
+                users = list(users.difference(domains))
                 
         return users
 
@@ -80,10 +142,11 @@ class SpamManager:
         users = SpamManager.filter_as(self.users, filter)
             
         for user in users:
-            paths = {key: f"{self.source_path}{user}{SpamManager.relative_paths[key]}" for key in lists.keys()}
+            paths = {key: f"{SpamManager.parameters['source_path']}{user}{SpamManager.parameters['relative_paths'][key]}" for key in lists.keys()}
+            inserted_domains = {key: deepcopy(lists[key]) for key in ["whitelist", "blacklist"]}
+            repeated_domains = {key: [] for key in ["whitelist", "blacklist"]}
 
             for key, path in paths.items():
-                temporal_lists = deepcopy(lists)
                 last_line_character = ''
                 
                 with open(path, 'r+') as file:          
@@ -93,26 +156,28 @@ class SpamManager:
                         
                         if domain == '':
                             continue
-                        
-                        try:
-                            if domain in temporal_lists[key]:
-                                raise Exception(f'El dominio {domain} en la lista {key} ya existe en el usuario {user}')
-                        except Exception as error:
-                            temporal_lists[key].remove(domain)
-                            print(error)
-                            logging.warning(error)
 
+                        if domain in inserted_domains[key]:
+                            inserted_domains[key].remove(domain)
+                            repeated_domains[key].append(domain)
+                
                 with open(path, 'a+') as file:
                     prepend = ''
-                    domains_concat_by_commas = ', '.join(temporal_lists[key]) if len(temporal_lists[key]) > 0 else 'Ninguno'
-                    domains_concat_by_breaklines = '\n'.join(temporal_lists[key])
+                    domains_concat_by_breaklines = '\n'.join(inserted_domains[key])
                     
-                    if len(temporal_lists[key]) != 0 and last_line_character != '\n':
+                    if len(inserted_domains[key]) != 0 and last_line_character != '\n':
                         prepend = '\n'
                         
                     file.write(prepend + domains_concat_by_breaklines)
-                    print(f"Dominios agregados al usuario {user} en la lista {key}: {domains_concat_by_commas}")
-                    logging.info(f"Dominios agregados al usuario {user} en la lista {key}: {domains_concat_by_commas}")
+
+            summary = f'Usuario: {user}\n'
+            
+            for key in ["whitelist", "blacklist"]:
+                summary += f"\tLista: {key}\n"
+                summary += f"\t\tAgregados: {inserted_domains[key]}\n"
+                summary += f"\t\tRepetidos: {repeated_domains[key]}\n"
+
+            SpamManager.log_and_print(summary, "info")
 
     """
     Permite eliminar dominios de la lista blanca y negra de los usuarios. Note que el metodo puede hacerlo solo para
@@ -130,11 +195,11 @@ class SpamManager:
         users = SpamManager.filter_as(self.users, filter)
 
         for user in users:
-            paths = {key: f"{self.source_path}{user}{SpamManager.relative_paths[key]}" for key in undesirables.keys()}
+            paths = {key: f"{SpamManager.parameters['source_path']}{user}{SpamManager.parameters['relative_paths'][key]}" for key in undesirables.keys()}
+            dropped_domains = {"whitelist": [], "blacklist": []}
             
             for key, path in paths.items():
                 temporal_file, absolute_temporal_file_path = mkstemp()
-                stragglers = []
                 
                 with fdopen(temporal_file, 'w') as new_file:
                     with open(path) as old_file:
@@ -147,16 +212,19 @@ class SpamManager:
                             if domain not in undesirables[key]:
                                 new_file.write(f'{domain}\n')
                             else:
-                                stragglers.append(domain)
+                                dropped_domains[key].append(domain)
                                 
                 copymode(path, absolute_temporal_file_path)
                 remove(path)
                 move(absolute_temporal_file_path, path)
 
-                stragglers_concat_by_commas = ', '.join(stragglers) if len(stragglers) > 0 else 'Ninguno'
-                
-                print(f"Dominios eliminados al usuario {user}de la lista {key}: {stragglers_concat_by_commas}")
-                logging.info(f"Dominios eliminados al usuario {user}de la lista {key}: {stragglers_concat_by_commas}")
+            summary = f'Usuario: {user}\n'
+
+            for key in ["whitelist", "blacklist"]:
+                summary += f'\tLista: {key}\n'
+                summary += f'\t\tEliminados: {dropped_domains[key]}\n'
+
+            SpamManager.log_and_print(summary, "info")
 
 """
 Se definen todos los parametros para ser ejectuado el script en consola: add, remove, whitelist, blacklist, allow y deny.
@@ -197,55 +265,75 @@ parser.add_argument("--remove",
 parser.add_argument("--whitelist",
                     default="",
                     type=str,
-                    help="La ruta absoluta del archivo que contiene todos los dominios que se desean agregar a la lista blanca. Estos deben estar separados por un un salto de linea y pueden ser de la forma '*@dominio', o bien, 'dominio' (sin comillas).")
+                    help="La ruta absoluta o relativa del archivo que contiene todos los dominios que se desean agregar a la lista blanca. Estos deben estar separados por un un salto de linea y pueden ser de la forma '*@dominio', o bien, 'dominio' (sin comillas).")
 parser.add_argument("--blacklist",
                     default="",
                     type=str,
-                    help="La ruta absoluta del archivo que contiene todos los dominios que se desean agregar a la lista negra. Estos deben estar separados por un un salto de linea y pueden ser de la forma '*@dominio', o bien, 'dominio' (sin comillas).")
+                    help="La ruta absoluta o relativa del archivo que contiene todos los dominios que se desean agregar a la lista negra. Estos deben estar separados por un un salto de linea y pueden ser de la forma '*@dominio', o bien, 'dominio' (sin comillas).")
 parser.add_argument("--allow",
                     type=str,
                     default="",
-                    help="La ruta absoluta del archivo que contiene todos los usuarios a los que se desea aplicar estos nuevos dominios. Todos estos deben estar separados por un salto de linea.")
+                    help="La ruta absoluta o relativa del archivo que contiene todos los usuarios a los que se desea aplicar estos nuevos dominios. Todos estos deben estar separados por un salto de linea.")
 parser.add_argument("--deny",
                     type=str,
                     default="",
-                    help="La ruta absoluta del archivo que contiene todos los usuarios a los que no se desea aplicar estos nuevos dominios. Todos estos deben estar separados por un salto de linea.")
+                    help="La ruta absoluta o relativa del archivo que contiene todos los usuarios a los que no se desea aplicar estos nuevos dominios. Todos estos deben estar separados por un salto de linea.")
+parser.add_argument("--auto",
+                    type=str,
+                    default="",
+                    help="Permite asociar automáticamente la lista blanca, negra, los usuarios denegados y/o permitidos y ejecutar la actualización de dominios. Como parámetro debe ser una una ruta relativa o absoluta de la carpeta que tenga todos los archivos anteriormente mencionados. Estos deben llamarse estrictamente whitelist, blacklist, deny y allow.")
 
 args = parser.parse_args()
-
-"""
-Se transforman a una lista todos los archivos provistos en las rutas.
-"""
-list_filenames = {"whitelist": args.whitelist, "blacklist": args.blacklist}
-filter_filenames = {"allow": args.allow, "deny": args.deny}
-
-not_empty_filenames = {key: filename for (key, filename) in list_filenames.items() if filename != ""}
-not_empty_filters = {key: filename for (key, filename) in filter_filenames.items() if filename != ""}
-    
-lists = {}
-filters = {}
 
 """
 Se elige la accion de acuerdo al parametro provisto en la consola. En caso de que uno de los archivos no exista,
 se genera una excepcion y no se realiza nada.
 """
 try:
+    if not args.add and not args.remove:
+        raise Exception("Asegurese de indicar los flags correspondientes.")
+    if args.add and args.remove:
+        raise Exception("Solo se permite agregar o remover dominios a la lista blanca y/o negra, pero no ambas opciones al mismo tiempo.")
+    if args.auto == "" and args.whitelist == "" and args.blacklist == "":
+        raise Exception("No se esta indicando ningun archivo para el cual agregar/remover dominios en la lista blanca o negra")
+    if args.whitelist or args.blacklist or args.allow or args.deny:
+        raise Exception("No puede usar los parámetros whitelist, blacklist, allow o deny cuando el parámetro auto está activo.")
+
+    list_filenames = {"whitelist": args.whitelist, "blacklist": args.blacklist}
+    filter_filenames = {"allow": args.allow, "deny": args.deny}
+
+    not_empty_filenames = {key: filename for (key, filename) in list_filenames.items() if filename != ""}
+    not_empty_filters = {key: filename for (key, filename) in filter_filenames.items() if filename != ""}
+        
+    lists = {}
+    filters = {}
+
+    manager = SpamManager()
+
+    """
+    Cuando el parametro auto esta activado, se tomaran todos los archivos con nombres 
+    """
+    if args.auto != "":
+        listnames = listdir(args.auto)
+        available_listnames = ["whitelist", "blacklist"]
+        available_filternames = ["allow", "deny"]
+
+        if args.auto[-1] != "/":
+            args.auto += "/"
+        
+        for listname in listnames:
+            filename = f"{args.auto}{listname}"
+            
+            if listname in available_listnames:
+                not_empty_filenames[listname] = filename
+            if listname in available_filternames:
+                not_empty_filters[listname] = filename
+
     for key, filename in not_empty_filenames.items():
         lists[key] = SpamManager.tokenize(filename)
 
     for key, filename in not_empty_filters.items():
         filters[key] = SpamManager.tokenize(filename)
-    
-    source_path = '/home/re000444/mail/imaco.cl/'
-    manager = SpamManager(source_path)
-
-    if not args.add and not args.remove:
-        raise Exception("Asegurese de indicar los flags correspondientes.")
-    if args.add and args.remove:
-        raise Exception("Solo se permite agregar o remover dominios a la lista blanca y/o negra, pero no ambas opciones al mismo tiempo.")
-    if args.add and args.whitelist == "" and args.blacklist == "" or \
-       args.remove and args.whitelist == "" and args.blacklist == "":
-        raise Exception("No se esta indicando ningun archivo para el cual agregar/remover dominios en la lista blanca o negra")
 
     if args.add:
         manager.add(lists, filters)
@@ -253,9 +341,6 @@ try:
         manager.remove(lists, filters)
         
 except FileNotFoundError:
-    error = "Una o muchas rutas de los archivos son invalidas, o bien, alguno de los usuarios que se desea filtrar no existe."
-    parser.error(error)
-    logging.error(error)
+    parser.error("Una o muchas rutas de los archivos son invalidas.")
 except Exception as error:
     parser.error(error)
-    logging.error(error)
