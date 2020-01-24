@@ -225,7 +225,7 @@ Los parámetros permitidos y sus valores son:
 Un archivo de ejemplo ubicado en la ruta por defecto, es decir, `config/parameters.config` sería:
 
 ```
-source_path 			= C:\Users\user\Desktop\scripts\SpamManager\users\
+source_path = C:\Users\user\Desktop\scripts\SpamManager\users\
 whitelist_relative_path = \.spamassassin\whitelist
 blacklist_relative_path = \.spamassassin\blacklist
 ```
