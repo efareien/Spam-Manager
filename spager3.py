@@ -18,6 +18,7 @@ class ParameterManager:
     Permite obtener todos los parametros del archivo de configuracion presentes en la ruta
     `config/parameters.config` que seran usados como referencia para agregar o eliminar dominios.
     """
+    @staticmethod
     def get_parameters(source):
         parameters = {
             "source_path": '/home/re000444/mail/imaco.cl/',
@@ -69,6 +70,7 @@ class SpamManager:
     """
     Permite registrar en el archivo log un mensaje de cierto tipo, ya sea warning, error o info.
     """
+    @staticmethod
     def log_and_print(message, kind):
         SpamManager.logging_functions[kind](message)
         print(message)
