@@ -71,6 +71,7 @@ class SpamManager:
     """
     Permite registrar en el archivo log un mensaje de cierto tipo, ya sea warning, error o info.
     """
+    @staticmethod
     def log_and_print(message, kind):
         SpamManager.logging_functions[kind](message)
         print message
