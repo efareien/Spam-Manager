@@ -114,7 +114,7 @@ class SpamManager:
             users, domains = set(users), set(domains)
 
             """
-            Simula un left join que excluye cualquier elemento del lado derecho, es decir, obtenemos los elementos que no están
+            Simula un left join que excluye cualquier elemento del lado derecho, es decir, obtenemos los elementos que no estan
             presentes en el lado derecho para asi ver si estamos tratando con un usuario que no existe.
             """
             if len(domains) != len(users.intersection(domains)):
@@ -146,8 +146,8 @@ class SpamManager:
             
         for user in users:
             paths = {key: "{}{}{}".format(SpamManager.parameters['source_path'], user, SpamManager.parameters['relative_paths'][key]) for key in lists.keys()}
-            inserted_domains = {key: deepcopy(lists[key]) for key in ["whitelist", "blacklist"]}
-            repeated_domains = {key: [] for key in ["whitelist", "blacklist"]}
+            inserted_domains = {key: deepcopy(lists[key]) for key in lists.keys()}
+            repeated_domains = {key: [] for key in lists.keys()}
 
             for key, path in paths.items():
                 last_line_character = ''
@@ -175,7 +175,7 @@ class SpamManager:
 
             summary = "Usuario: {}\n".format(user)
             
-            for key in ["whitelist", "blacklist"]:
+            for key in lists.keys():
                 summary += "\tLista: {}\n".format(key)
                 summary += "\t\tAgregados: {}\n".format(inserted_domains[key])
                 summary += "\t\tRepetidos: {}\n".format(repeated_domains[key])
@@ -199,7 +199,7 @@ class SpamManager:
 
         for user in users:
             paths = {key: "{}{}{}".format(SpamManager.parameters['source_path'], user, SpamManager.parameters['relative_paths'][key]) for key in undesirables.keys()}
-            dropped_domains = {"whitelist": [], "blacklist": []}
+            dropped_domains = {key: [] for key in undesirables.keys()}
 
             for key, path in paths.items():
                 temporal_file, absolute_temporal_file_path = mkstemp()
@@ -223,7 +223,7 @@ class SpamManager:
 
             summary = "Usuario: {}\n".format(user)
 
-            for key in ["whitelist", "blacklist"]:
+            for key in undesirables.keys():
             	summary += "\tLista: {}\n".format(key)
             	summary += "\t\tEliminados: {}\n".format(dropped_domains[key])
 
@@ -284,7 +284,7 @@ parser.add_argument("--deny",
 parser.add_argument("--auto",
                     type=str,
                     default="",
-                    help="Permite asociar automáticamente la lista blanca, negra, los usuarios denegados y/o permitidos y ejecutar la actualización de dominios. Como parámetro debe ser una una ruta relativa o absoluta de la carpeta que tenga todos los archivos anteriormente mencionados. Estos deben llamarse estrictamente whitelist, blacklist, deny y allow.")
+                    help="Permite asociar automÃ¡ticamente la lista blanca, negra, los usuarios denegados y/o permitidos y ejecutar la actualizaciÃ³n de dominios. Como parÃ¡metro debe ser una una ruta relativa o absoluta de la carpeta que tenga todos los archivos anteriormente mencionados. Estos deben llamarse estrictamente whitelist, blacklist, deny y allow.")
 
 args = parser.parse_args()
 
@@ -293,14 +293,20 @@ Se elige la accion de acuerdo al parametro provisto en la consola. En caso de qu
 se genera una excepcion y no se realiza nada.
 """
 try:
-    if not args.add and not args.remove:
-        raise Exception("Asegurese de indicar los flags correspondientes.")
-    if args.add and args.remove:
-        raise Exception("Solo se permite agregar o remover dominios a la lista blanca y/o negra, pero no ambas opciones al mismo tiempo.")
-    if args.auto == "" and args.whitelist == "" and args.blacklist == "":
-        raise Exception("No se esta indicando ningun archivo para el cual agregar/remover dominios en la lista blanca o negra")
-    if args.whitelist or args.blacklist or args.allow or args.deny:
-        raise Exception("No puede usar los parámetros whitelist, blacklist, allow o deny cuando el parámetro auto está activo.")
+    if args.auto:
+        if not (args.add or args.remove):
+            raise Exception("Debe indicar si desea agregar (add) o eliminar (remove) los dominios.")
+        if args.add and args.remove:
+            raise Exception("Solo se permite agregar o remover dominios a la lista blanca y/o negra, pero no ambas opciones al mismo tiempo.")
+        if args.whitelist or args.blacklist or args.allow or args.deny:
+            raise Exception("No se pueden usar los parámetros whitelist, blacklist, allow o deny cuando el parametro auto esta activo.")
+    else:
+        if not (args.add or args.remove):
+            raise Exception("Debe indicar si desea agregar (add) o eliminar (remove) los dominios.")
+        if args.add and args.remove:
+            raise Exception("Solo se permite agregar o remover dominios a la lista blanca y/o negra, pero no ambas opciones al mismo tiempo.")
+        if not (args.whitelist or args.blacklist):
+            raise Exception("Debe indicar como minimo el tipo de lista que desea modificar mediante los parametros whitelist y blacklist.")
 
     list_filenames = {"whitelist": args.whitelist, "blacklist": args.blacklist}
     filter_filenames = {"allow": args.allow, "deny": args.deny}
